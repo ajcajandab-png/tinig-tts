@@ -54,6 +54,7 @@
   .clip .row{margin-top:8px}
   .clip .btn,.clip button{padding:7px 12px;font-size:12px}
   .empty{padding:14px;text-align:center;color:var(--muted);font-size:13px}
+  code{background:#ffffff14;padding:1px 5px;border-radius:5px;font-size:11px}
   footer{text-align:center;color:var(--muted);font-size:12px;padding:20px}
   footer a{color:var(--muted)}
 </style>
@@ -112,7 +113,71 @@
 </main>
 <footer>Tinig is free and runs entirely in your browser — your text never leaves your device. Tagalog voice by Meta's open-source <a href="https://huggingface.co/facebook/mms-tts-tgl" target="_blank" rel="noopener">MMS-TTS</a> model (CC-BY-NC 4.0, non-commercial). English AI voices by the open-source <a href="https://huggingface.co/hexgrad/Kokoro-82M" target="_blank" rel="noopener">Kokoro-82M</a> model (Apache-2.0).</footer>
 
-<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+<script id="workerSrc" type="text/plain">
+let kokoro = null, tl = null, ortMod = null;
+const post = (m, t) => self.postMessage(m, t || []);
+async function fetchWithProgress(url, total){
+  let cache=null; try{ cache = await caches.open('tinig-models'); const hit = await cache.match(url); if(hit) return new Uint8Array(await hit.arrayBuffer()); }catch(e){}
+  const res = await fetch(url); if(!res.ok) throw new Error('Model download failed ('+res.status+')');
+  total = +res.headers.get('content-length') || total; const reader = res.body.getReader(); const parts=[]; let got=0, last=0;
+  for(;;){ const {done,value}=await reader.read(); if(done) break; parts.push(value); got+=value.length;
+    if(got-last>500000){ last=got; post({type:'progress', pct: got/total*100}); } }
+  const buf=new Uint8Array(got); let o=0; for(const p of parts){buf.set(p,o);o+=p.length;}
+  try{ if(cache) await cache.put(url, new Response(buf)); }catch(e){}
+  return buf;
+}
+async function loadKokoro(){
+  if(kokoro) return kokoro;
+  const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm');
+  const files = {};
+  const progress_callback = p => { if(p.status==='progress' && p.total){ files[p.file]=[p.loaded,p.total];
+    let l=0,t=0; Object.values(files).forEach(([a,b])=>{l+=a;t+=b}); post({type:'progress', pct:l/t*100}); } };
+  let device='wasm', dtype='q8';
+  try{ if(self.navigator.gpu && await navigator.gpu.requestAdapter()){ device='webgpu'; dtype='fp32'; } }catch(e){}
+  try{ kokoro = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{dtype,device,progress_callback}); }
+  catch(e){ if(device==='wasm') throw e; kokoro = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{dtype:'q8',device:'wasm',progress_callback}); }
+  return kokoro;
+}
+async function loadTagalog(){
+  if(tl) return tl;
+  ortMod = await import('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.wasm.min.mjs');
+  const ort = ortMod.default || ortMod;
+  ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+  ort.env.wasm.numThreads = (self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency||2) : 1);
+  const bytes = await fetchWithProgress('https://huggingface.co/willwade/mms-tts-multilingual-models-onnx/resolve/main/tgl/model.onnx', 114020868);
+  post({type:'status', text:'Starting Tagalog voice…'});
+  tl = { ort, session: await ort.InferenceSession.create(bytes, {executionProviders:['wasm']}) };
+  return tl;
+}
+async function runTagalog(ids, speed){
+  const { ort, session } = await loadTagalog();
+  const feeds = {};
+  for(const name of session.inputNames){
+    const n = name.toLowerCase();
+    if(n==='x'||n.includes('input_ids')||n==='input') feeds[name]=new ort.Tensor('int64',BigInt64Array.from(ids.map(BigInt)),[1,ids.length]);
+    else if(n.includes('attention')) feeds[name]=new ort.Tensor('int64',BigInt64Array.from(ids.map(()=>1n)),[1,ids.length]);
+    else if(n.includes('length_scale')) feeds[name]=new ort.Tensor('float32',Float32Array.from([1/speed]),[1]);
+    else if(n.includes('noise_scale_w')) feeds[name]=new ort.Tensor('float32',Float32Array.from([0.8]),[1]);
+    else if(n.includes('noise_scale')) feeds[name]=new ort.Tensor('float32',Float32Array.from([0.667]),[1]);
+    else if(n.includes('length')) feeds[name]=new ort.Tensor('int64',BigInt64Array.from([BigInt(ids.length)]),[1]);
+    else if(n.includes('sid')||n.includes('speaker')) feeds[name]=new ort.Tensor('int64',BigInt64Array.from([0n]),[1]);
+  }
+  const out = await session.run(feeds);
+  return { audio: Float32Array.from(out[session.outputNames[0]].data), rate: 16000 };
+}
+self.onmessage = async e => {
+  const m = e.data;
+  try{
+    if(m.type==='load'){ if(m.engine==='tl') await loadTagalog(); else await loadKokoro(); post({type:'loaded', id:m.id}); }
+    else if(m.type==='gen'){
+      let r;
+      if(m.engine==='tl') r = await runTagalog(m.ids, m.speed);
+      else { const k = await loadKokoro(); const a = await k.generate(m.text, {voice:m.voice, speed:m.speed}); r = {audio: Float32Array.from(a.audio), rate: a.sampling_rate}; }
+      post({type:'audio', id:m.id, audio:r.audio, rate:r.rate}, [r.audio.buffer]);
+    }
+  }catch(err){ post({type:'error', id:m.id, message: String(err && err.message || err)}); }
+};
+</script>
 <script type="module">
 const $ = id => document.getElementById(id);
 const store = {
@@ -121,13 +186,33 @@ const store = {
 };
 const esc = s => s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const colors=['#7c5cff','#22d3a6','#f5b84b','#ff6b8b','#4cc3ff','#c07cff','#ff9a4c'];
+function setStatus(s){ $('status').textContent=s; }
 
-/* ---------- AI voices (Kokoro) ---------- */
+/* ---------- background worker (keeps the page responsive) ---------- */
+let worker = null, reqId = 0; const pending = new Map();
+function getWorker(){
+  if(worker) return worker;
+  const url = URL.createObjectURL(new Blob([$('workerSrc').textContent], {type:'text/javascript'}));
+  worker = new Worker(url, {type:'module'});
+  worker.onmessage = e => {
+    const m = e.data;
+    if(m.type==='progress'){ $('prog').style.width=Math.min(100,m.pct)+'%'; setStatus(`Downloading voice model… ${Math.min(100,Math.round(m.pct))}% (only the first time)`); return; }
+    if(m.type==='status'){ setStatus(m.text); return; }
+    const p = pending.get(m.id); if(!p) return; pending.delete(m.id);
+    if(m.type==='error') p.reject(new Error(m.message)); else p.resolve(m);
+  };
+  worker.onerror = e => { pending.forEach(p=>p.reject(new Error(e.message||'Voice engine crashed'))); pending.clear(); worker=null; };
+  return worker;
+}
+function call(msg){ return new Promise((resolve,reject)=>{ const id=++reqId; pending.set(id,{resolve,reject}); getWorker().postMessage({...msg,id}); }); }
+const loaded = {};
+async function ensure(engine){ if(loaded[engine]) return; setStatus(engine==='tl'?'Loading Tagalog voice (one-time download, ~110 MB)…':'Loading AI voice model (one-time download, ~90 MB)…'); await call({type:'load',engine}); loaded[engine]=true; $('prog').style.width='0'; }
+
+/* ---------- voices ---------- */
 const TL_VOICES = [
   ['tl_tinig','Tinig','PH','Natural',1.0],['tl_malalim','Malalim','PH','Deep',0.84],
   ['tl_matinis','Matinis','PH','Bright',1.16],['tl_bata','Bata','PH','Child-like',1.35]
 ];
-let aiLang = store.get('aiLang','all');
 const AI_VOICES = [
   ['af_heart','Heart','US','Female','A'],['af_bella','Bella','US','Female','A-'],['af_nicole','Nicole','US','Female','B-'],
   ['af_aoede','Aoede','US','Female','C+'],['af_kore','Kore','US','Female','C+'],['af_sarah','Sarah','US','Female','C+'],
@@ -140,15 +225,14 @@ const AI_VOICES = [
   ['bf_lily','Lily','UK','Female','D'],['bm_george','George','UK','Male','C'],['bm_fable','Fable','UK','Male','C'],
   ['bm_lewis','Lewis','UK','Male','D+'],['bm_daniel','Daniel','UK','Male','D']
 ];
-let aiVoice = store.get('aiVoice','af_heart');
-let tts = null, loading = null, engine = store.get('engine','ai'), cancel = false;
+let aiVoice = store.get('aiVoice','af_heart'), aiLang = store.get('aiLang','all'), engine = store.get('engine','ai'), cancel = false;
 
 function renderAI(){
   const q = $('aiSearch').value.toLowerCase();
   [...$('aiLangTabs').children].forEach(b=>b.classList.toggle('on',b.dataset.l===aiLang));
   const all = [...TL_VOICES.map(v=>[...v,'tl']), ...AI_VOICES.map(v=>[...v,'en'])];
   const list = all.filter(v => (aiLang==='all'||v[5]===aiLang) && (v[1]+' '+v[2]+' '+v[3]+' '+(v[5]==='tl'?'tagalog filipino':'english')).toLowerCase().includes(q));
-  $('aiVoices').innerHTML = list.map((v,i)=>{const c=colors[all.indexOf(v)%colors.length];
+  $('aiVoices').innerHTML = list.map(v=>{const c=colors[all.indexOf(v)%colors.length];
     return `<div class="voice ${v[0]===aiVoice?'sel':''}" data-v="${v[0]}">
       <div class="av" style="background:${c}33;color:${c}">${v[1].slice(0,2).toUpperCase()}</div>
       <div><b>${v[1]}</b><small>${v[5]==='tl'?'Tagalog · '+v[3]:'English ('+v[2]+') · '+v[3]}</small></div>
@@ -158,106 +242,41 @@ $('aiVoices').onclick = e => { const r=e.target.closest('[data-v]'); if(!r) retu
 $('aiSearch').oninput = renderAI;
 $('aiLangTabs').onclick = e => { const b=e.target.closest('[data-l]'); if(!b) return; aiLang=b.dataset.l; store.set('aiLang',aiLang); renderAI(); };
 
-async function loadModel(){
-  if(tts) return tts;
-  if(loading) return loading;
-  loading = (async()=>{
-    setStatus('Loading AI voice model (one-time download, ~90 MB)…');
-    const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm');
-    const files = {};
-    const progress_callback = p => {
-      if(p.status==='progress' && p.total){ files[p.file]=[p.loaded,p.total];
-        let l=0,t=0; Object.values(files).forEach(([a,b])=>{l+=a;t+=b});
-        $('prog').style.width=(l/t*100)+'%'; setStatus(`Downloading AI model… ${Math.round(l/t*100)}% (only the first time)`); }
-    };
-    let device='wasm', dtype='q8';
-    try{ if(navigator.gpu && await navigator.gpu.requestAdapter()){ device='webgpu'; dtype='fp32'; } }catch(e){}
-    try{ tts = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{dtype,device,progress_callback}); }
-    catch(e){ if(device!=='wasm'){ tts = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{dtype:'q8',device:'wasm',progress_callback}); } else throw e; }
-    $('prog').style.width='0'; setStatus('AI model ready ✓');
-    return tts;
-  })();
-  try{ return await loading; } catch(e){ loading=null; throw e; }
+/* ---------- script parsing: [pause] tags become silence, other [notes] are skipped ---------- */
+function parseScript(text){
+  const segs=[]; const re=/\[([^\]]*)\]/g; let last=0, m;
+  const pushText = t => { t.split(/\n\s*\n/).forEach((p,i)=>{ if(i>0) segs.push({pause:0.6}); if(p.trim()) segs.push({text:p.replace(/\s+/g,' ').trim()}); }); };
+  while((m=re.exec(text))){ pushText(text.slice(last,m.index)); last=re.lastIndex;
+    const tag=m[1].toLowerCase();
+    if(/pause|tigil|hinto|silence|beat/.test(tag)) segs.push({pause: /long|mahaba/.test(tag)?1.3 : /short|maikli|beat/.test(tag)?0.35 : 0.7});
+  }
+  pushText(text.slice(last));
+  return segs;
+}
+function chunkText(t, max){
+  const parts = t.match(/[^.!?]+[.!?]*["')\]]*\s*/g) || [t];
+  const out=[]; let buf='';
+  const flush=()=>{ if(buf.trim()) out.push(buf.trim()); buf=''; };
+  for(let p of parts){
+    while(p.length>max){ // very long sentence: split at commas/spaces
+      let cut=p.lastIndexOf(',',max); if(cut<max*0.4) cut=p.lastIndexOf(' ',max); if(cut<=0) cut=max;
+      flush(); out.push(p.slice(0,cut+1).trim()); p=p.slice(cut+1);
+    }
+    if((buf+p).length>max) flush(); buf+=p;
+  }
+  flush(); return out;
 }
 
-/* ---------- Tagalog AI voice (Meta MMS-TTS, CC-BY-NC 4.0) ---------- */
-const TL_URL = 'https://huggingface.co/willwade/mms-tts-multilingual-models-onnx/resolve/main/tgl/model.onnx';
+/* ---------- Tagalog tokenizer ---------- */
 const TL_VOCAB = {" ":25,"'":17,"-":4,"0":12,"1":32,"2":20,"3":37,"4":42,"5":10,"6":15,"7":38,"8":39,"9":29,"_":35,"a":0,"b":30,"c":22,"d":31,"e":11,"f":21,"g":3,"h":33,"i":8,"j":26,"k":41,"l":36,"m":6,"n":16,"o":5,"p":23,"q":27,"r":24,"s":7,"t":28,"u":9,"v":14,"w":34,"x":2,"y":19,"z":13,"ñ":40,"ʼ":1,"–":18};
-let tlSession = null, tlLoading = null;
-async function fetchWithProgress(url, label){
-  let cache=null; try{ cache = await caches.open('tinig-models'); const hit = await cache.match(url); if(hit) return new Uint8Array(await hit.arrayBuffer()); }catch(e){}
-  const res = await fetch(url); if(!res.ok) throw new Error('Model download failed ('+res.status+')');
-  const total = +res.headers.get('content-length') || 114020868; const reader = res.body.getReader(); const parts=[]; let got=0;
-  for(;;){ const {done,value}=await reader.read(); if(done) break; parts.push(value); got+=value.length;
-    $('prog').style.width=Math.min(100,got/total*100)+'%'; setStatus(`${label} ${Math.min(100,Math.round(got/total*100))}% (only the first time)`); }
-  const buf=new Uint8Array(got); let o=0; for(const p of parts){buf.set(p,o);o+=p.length;}
-  try{ if(cache) await cache.put(url, new Response(buf)); }catch(e){}
-  return buf;
-}
-async function loadTagalog(){
-  if(tlSession) return tlSession; if(tlLoading) return tlLoading;
-  tlLoading=(async()=>{
-    if(!window.ort) throw new Error('Speech engine failed to load. Check your internet and refresh.');
-    ort.env.wasm.wasmPaths='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
-    setStatus('Loading Tagalog voice (one-time download, ~110 MB)…');
-    const bytes = await fetchWithProgress(TL_URL,'Downloading Tagalog voice…');
-    setStatus('Starting Tagalog voice…');
-    tlSession = await ort.InferenceSession.create(bytes,{executionProviders:['wasm']});
-    $('prog').style.width='0'; return tlSession;
-  })();
-  try{ return await tlLoading; }catch(e){ tlLoading=null; throw e; }
-}
 function tlTokens(text){
-  const clean = text.toLowerCase().normalize('NFC').replace(/[’‘`]/g,"'").replace(/[—]/g,'–');
-  const ids=[]; for(const ch of clean){ if(ch in TL_VOCAB) ids.push(TL_VOCAB[ch]); else if(/\s/.test(ch)) ids.push(25); }
+  const clean = text.toLowerCase().normalize('NFC').replace(/[’‘`]/g,"'").replace(/—/g,'–');
+  const ids=[]; for(const ch of clean){ if(ch in TL_VOCAB) ids.push(TL_VOCAB[ch]); else if(/[\s.,!?;:]/.test(ch) && ids[ids.length-1]!==25) ids.push(25); }
   while(ids.length && ids[0]===25) ids.shift(); while(ids.length && ids[ids.length-1]===25) ids.pop();
   const out=new Array(ids.length*2+1).fill(0); ids.forEach((t,i)=>out[i*2+1]=t); return out;
 }
-async function tlRun(session, text, speed){
-  const ids = tlTokens(text); if(ids.length<3) return new Float32Array(0);
-  const feeds={};
-  for(const name of session.inputNames){
-    const n=name.toLowerCase();
-    if(n==='x'||n.includes('input_ids')||n==='input') feeds[name]=new ort.Tensor('int64',BigInt64Array.from(ids.map(BigInt)),[1,ids.length]);
-    else if(n.includes('attention')) feeds[name]=new ort.Tensor('int64',BigInt64Array.from(ids.map(()=>1n)),[1,ids.length]);
-    else if(n.includes('length_scale')) feeds[name]=new ort.Tensor('float32',Float32Array.from([1/speed]),[1]);
-    else if(n.includes('noise_scale_w')) feeds[name]=new ort.Tensor('float32',Float32Array.from([0.8]),[1]);
-    else if(n.includes('noise_scale')) feeds[name]=new ort.Tensor('float32',Float32Array.from([0.667]),[1]);
-    else if(n.includes('length')) feeds[name]=new ort.Tensor('int64',BigInt64Array.from([BigInt(ids.length)]),[1]);
-    else if(n.includes('sid')||n.includes('speaker')) feeds[name]=new ort.Tensor('int64',BigInt64Array.from([0n]),[1]);
-  }
-  const out = await session.run(feeds);
-  return Float32Array.from(out[session.outputNames[0]].data);
-}
-function pitchShift(a, f){ // f<1 deeper, f>1 higher (resample; duration pre-compensated)
-  if(f===1) return a; const n=Math.floor(a.length/f), o=new Float32Array(n);
-  for(let i=0;i<n;i++){ const x=i*f, j=Math.floor(x), t=x-j; o[i]=(a[j]||0)*(1-t)+(a[j+1]||0)*t; } return o;
-}
-async function generateTagalog(text, voice){
-  const session = await loadTagalog();
-  const chunks = chunkText(text), pieces=[]; let total=0; const gap=new Float32Array(Math.round(16000*0.2));
-  for(let i=0;i<chunks.length;i++){
-    if(cancel) throw new Error('cancelled');
-    setStatus(`Generating Tagalog… part ${i+1} of ${chunks.length}`);
-    let a = await tlRun(session, chunks[i], (+$('rate').value)/voice[4]);
-    a = pitchShift(a, voice[4]);
-    pieces.push(a,gap); total+=a.length+gap.length;
-    $('prog').style.width=((i+1)/chunks.length*100)+'%';
-    await new Promise(r=>setTimeout(r,0));
-  }
-  const all=new Float32Array(total); let o=0; for(const p of pieces){all.set(p,o);o+=p.length;}
-  let peak=0; for(const v of all) peak=Math.max(peak,Math.abs(v)); if(peak>0) for(let i=0;i<all.length;i++) all[i]=all[i]/peak*0.95;
-  return wav(all,16000);
-}
-
-function chunkText(t){
-  const parts = t.replace(/\s+\n/g,'\n').match(/[^.!?\n]+[.!?]*["')\]]*\s*|\n+/g) || [t];
-  const out=[]; let buf='';
-  for(const p of parts){ if(!p.trim()){ if(buf.trim()){out.push(buf);buf='';} continue; }
-    if((buf+p).length>300 && buf.trim()){ out.push(buf); buf=p; } else buf+=p; }
-  if(buf.trim()) out.push(buf);
-  return out.map(s=>s.trim());
-}
+function pitchShift(a, f){ if(f===1) return a; const n=Math.floor(a.length/f), o=new Float32Array(n);
+  for(let i=0;i<n;i++){ const x=i*f, j=Math.floor(x), t=x-j; o[i]=(a[j]||0)*(1-t)+(a[j+1]||0)*t; } return o; }
 
 function wav(samples, rate){
   const buf = new ArrayBuffer(44+samples.length*2), v = new DataView(buf);
@@ -270,17 +289,28 @@ function wav(samples, rate){
 }
 
 async function generateAI(text){
-  const model = await loadModel();
-  const chunks = chunkText(text), pieces = []; let rate = 24000, total = 0;
-  const gap = new Float32Array(Math.round(24000*0.18));
-  for(let i=0;i<chunks.length;i++){
+  const tv = TL_VOICES.find(v=>v[0]===aiVoice), eng = tv ? 'tl' : 'en';
+  await ensure(eng);
+  const jobs=[]; for(const s of parseScript(text)){ if(s.pause) jobs.push(s); else chunkText(s.text, tv?160:240).forEach(t=>jobs.push({text:t})); }
+  const nText = jobs.filter(j=>j.text).length; if(!nText) throw new Error('No readable text found.');
+  const pieces=[]; let rate = tv?16000:24000, done=0, total=0;
+  const t0=Date.now();
+  for(const j of jobs){
     if(cancel) throw new Error('cancelled');
-    setStatus(`Generating… part ${i+1} of ${chunks.length}`);
-    const a = await model.generate(chunks[i], { voice: aiVoice, speed: +$('rate').value });
-    rate = a.sampling_rate; pieces.push(a.audio, gap); total += a.audio.length + gap.length;
-    $('prog').style.width = ((i+1)/chunks.length*100)+'%';
+    if(j.pause){ pieces.push({sil:j.pause}); continue; }
+    const eta = done ? Math.round((Date.now()-t0)/done*(nText-done)/1000) : null;
+    setStatus(`Generating${tv?' Tagalog':''}… part ${done+1} of ${nText}${eta!=null?` · ~${eta>90?Math.round(eta/60)+' min':eta+'s'} left`:''}`);
+    let r;
+    if(tv){ const ids=tlTokens(j.text); if(ids.length<3){ done++; continue; }
+      r = await call({type:'gen',engine:'tl',ids,speed:(+$('rate').value)/tv[4]}); r.audio = pitchShift(r.audio, tv[4]); }
+    else r = await call({type:'gen',engine:'en',text:j.text,voice:aiVoice,speed:+$('rate').value});
+    rate = r.rate; pieces.push(r.audio, {sil:0.15}); done++;
+    $('prog').style.width=(done/nText*100)+'%';
   }
-  const all = new Float32Array(total); let o=0; for(const p of pieces){ all.set(p,o); o+=p.length; }
+  const arrs = pieces.map(p => p.sil ? new Float32Array(Math.round(rate*p.sil)) : p);
+  const all = new Float32Array(arrs.reduce((a,b)=>a+b.length,0)); let o=0; for(const a of arrs){ all.set(a,o); o+=a.length; }
+  let peak=0; for(let i=0;i<all.length;i++){ const v=Math.abs(all[i]); if(v>peak) peak=v; } if(peak>1) for(let i=0;i<all.length;i++) all[i]/=peak;
+  if(tv && peak>0 && peak<=1) for(let i=0;i<all.length;i++) all[i]=all[i]/peak*0.95;
   return wav(all, rate);
 }
 
@@ -307,18 +337,18 @@ if(synth){ loadDev(); synth.onvoiceschanged = loadDev; }
 
 function speakDevice(text){
   return new Promise(res=>{
-    synth.cancel(); const chunks=chunkText(text); let i=0;
-    const next=()=>{ if(cancel||i>=chunks.length) return res();
-      const u=new SpeechSynthesisUtterance(chunks[i]); if(devSel){u.voice=devSel;u.lang=devSel.lang;}
+    synth.cancel(); const jobs=[]; parseScript(text).forEach(s=>{ if(s.text) chunkText(s.text,200).forEach(t=>jobs.push(t)); });
+    let i=0;
+    const next=()=>{ if(cancel||i>=jobs.length) return res();
+      const u=new SpeechSynthesisUtterance(jobs[i]); if(devSel){u.voice=devSel;u.lang=devSel.lang;}
       u.rate=+$('rate').value; u.pitch=+$('pitch').value;
-      u.onend=()=>{i++;$('prog').style.width=(i/chunks.length*100)+'%';next();}; u.onerror=()=>{i++;next();};
-      setStatus('Speaking…'); synth.speak(u); };
+      u.onend=()=>{i++;$('prog').style.width=(i/jobs.length*100)+'%';next();}; u.onerror=()=>{i++;next();};
+      setStatus(`Speaking… part ${i+1} of ${jobs.length}`); synth.speak(u); };
     next();
   });
 }
 
 /* ---------- UI ---------- */
-function setStatus(s){ $('status').textContent=s; }
 function setEngine(e){
   engine=e; store.set('engine',e);
   $('tabAI').classList.toggle('on',e==='ai'); $('tabDev').classList.toggle('on',e==='dev');
@@ -326,7 +356,7 @@ function setEngine(e){
   $('pitchWrap').style.display=e==='dev'?'':'none';
   $('go').innerHTML = e==='ai' ? '⬇ Generate &amp; download' : '▶ Speak';
   $('engineNote').innerHTML = e==='ai'
-    ? '<b>AI voices</b> run on your own device, free. The first use downloads the voice model once (~90 MB), then it is cached. Works best on a laptop/desktop in Chrome or Edge.<br><br><b>Tagalog voices</b> download a separate model once (~110 MB). Type in Tagalog for best results. No character limit — long text is generated in parts.'
+    ? '<b>AI voices</b> run on your own device, free. The first use downloads the voice model once (English ~90 MB, Tagalog ~110 MB), then it is cached. Works best on a laptop/desktop in Chrome or Edge.<br><br><b>No character limit.</b> Long text is generated in parts — you can keep using the page while it works.<br><br><b>Script tags:</b> <code>[pause]</code>, <code>[short pause]</code> and <code>[long pause]</code> add silence. Other notes in brackets like <code>[serious]</code> are skipped, not read aloud.'
     : '<b>Device voices</b> use the voices built into your browser, in many languages (including Filipino in Edge). Plays instantly, but cannot be downloaded.';
 }
 $('tabAI').onclick=()=>setEngine('ai'); $('tabDev').onclick=()=>setEngine('dev');
@@ -347,26 +377,27 @@ $('go').onclick = async () => {
   const text=$('text').value.trim(); if(!text){ setStatus('Type some text first.'); return; }
   cancel=false; $('go').disabled=true; $('stop').disabled=false; $('prog').style.width='0';
   try{
-    if(engine==='ai'){ const tv=TL_VOICES.find(v=>v[0]===aiVoice); const blob= tv ? await generateTagalog(text,tv) : await generateAI(text); addClip(blob,text); setStatus('Done ✓ — click Download WAV'); }
+    if(engine==='ai'){ const blob=await generateAI(text); addClip(blob,text); setStatus('Done ✓ — click Download WAV'); }
     else { await speakDevice(text); setStatus(cancel?'Stopped':'Done ✓'); }
   }catch(e){ setStatus(cancel?'Stopped':'Error: '+(e.message||e)); console.error(e); }
   $('go').disabled=false; $('stop').disabled=true;
 };
-$('stop').onclick = () => { cancel=true; if(synth) synth.cancel(); setStatus('Stopping…'); };
+$('stop').onclick = () => { cancel=true; if(synth) synth.cancel(); setStatus('Stopping after the current part…'); };
 $('clear').onclick = () => { $('text').value=''; upd(); };
 
 const SAMPLES={
   "Welcome":"Welcome to Tinig, a free text to speech tool. Type anything, pick a voice, and download your audio.",
-  "Story":"Once upon a time, in a small town by the sea, a curious girl found a glowing shell that could whisper secrets of the ocean.",
-  "Tagalog":"Magandang araw sa inyong lahat! Ito ay isang libreng text to speech. Isulat lang ang gusto mong marinig, pumili ng boses, at i-download ang audio.",
-  "Explainer":"Have you ever wondered how a light bulb is made? Let's find out, step by step!",
+  "Story":"Once upon a time, in a small town by the sea, a curious girl found a glowing shell. [long pause] It could whisper secrets of the ocean.",
+  "Tagalog":"Magandang araw sa inyong lahat! [short pause] Ito ay isang libreng text to speech. Isulat lang ang gusto mong marinig, pumili ng boses, at i-download ang audio.",
+  "Explainer":"Have you ever wondered how a light bulb is made? [pause] Let's find out, step by step!",
   "Ad":"Big news! Our weekend sale is here. Up to fifty percent off on everything, this Saturday and Sunday only."
 };
 $('samples').innerHTML=Object.keys(SAMPLES).map(k=>`<button class="chip" data-s="${k}">${k}</button>`).join('');
-$('samples').onclick=e=>{const b=e.target.closest('[data-s]'); if(b){$('text').value=SAMPLES[b.dataset.s]; upd();}};
+$('samples').onclick=e=>{const b=e.target.closest('[data-s]'); if(!b) return; $('text').value=SAMPLES[b.dataset.s]; upd();
+  if(b.dataset.s==='Tagalog' && engine==='ai' && !TL_VOICES.some(v=>v[0]===aiVoice)){ aiVoice='tl_tinig'; aiLang='tl'; store.set('aiVoice',aiVoice); renderAI(); } };
 
-function upd(){ const t=$('text').value; const w=t.split(/\s+/).filter(Boolean).length;
-  $('count').textContent=`${t.length.toLocaleString()} characters (unlimited) · ~${Math.max(1,Math.round(w/150*60/(+$('rate').value)))}s`; store.set('draft',t); }
+function upd(){ const t=$('text').value; const w=t.replace(/\[[^\]]*\]/g,'').split(/\s+/).filter(Boolean).length;
+  $('count').textContent=`${t.length.toLocaleString()} characters (unlimited) · ~${Math.max(1,Math.round(w/150*60/(+$('rate').value)))}s audio`; store.set('draft',t); }
 $('text').addEventListener('input',upd);
 const rateU=()=>{ $('rateV').textContent=(+$('rate').value).toFixed(2).replace(/0$/,'')+'×'; store.set('rate',$('rate').value); upd(); };
 const pitchU=()=>{ $('pitchV').textContent=(+$('pitch').value).toFixed(2).replace(/0$/,''); };
@@ -375,5 +406,6 @@ $('rate').value=store.get('rate',1); $('rate').oninput=rateU; $('pitch').oninput
 $('text').value=store.get('draft','')||SAMPLES.Welcome;
 renderAI(); setEngine(engine); rateU(); pitchU();
 </script>
+
 </body>
 </html>
