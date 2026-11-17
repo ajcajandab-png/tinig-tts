@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tinig — Free AI Text to Speech</title>
+<meta name="description" content="Free AI text to speech. No sign-up, no token. Generate natural voices and download WAV audio.">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--panel2:#1e222b;--line:#2a2f3a;--text:#eef0f4;--muted:#9aa3b2;--accent:#7c5cff;--accent2:#22d3a6;--warn:#f5b84b;--bad:#ff6b8b}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+  header{display:flex;align-items:center;gap:12px;padding:18px 24px;border-bottom:1px solid var(--line)}
+  .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  header span{color:var(--muted);font-size:13px}
+  .badge{margin-left:auto;font-size:12px;color:var(--accent2);border:1px solid #22d3a655;padding:4px 10px;border-radius:99px}
+  main{display:grid;grid-template-columns:1fr 350px;gap:20px;padding:24px;max-width:1200px;margin:0 auto}
+  @media(max-width:880px){main{grid-template-columns:1fr;padding:14px}.badge{display:none}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+  textarea{width:100%;min-height:240px;resize:vertical;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:14px;font:16px/1.6 Inter,sans-serif;outline:none}
+  textarea:focus{border-color:var(--accent)}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .between{justify-content:space-between}
+  .muted{color:var(--muted);font-size:13px}
+  button,.btn{font:600 14px Inter,sans-serif;border-radius:10px;padding:11px 18px;cursor:pointer;color:var(--text);background:var(--panel2);border:1px solid var(--line);text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+  button:hover,.btn:hover{border-color:var(--accent)}
+  .primary{background:var(--accent)!important;border-color:var(--accent)!important;color:#fff!important}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+  .chip{font-size:12px;padding:6px 11px;border-radius:99px}
+  label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  select,input[type=search]{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font:14px Inter,sans-serif}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .val{float:right;color:var(--text)}
+  .tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--panel2);padding:5px;border-radius:12px;margin-top:10px}
+  .tabs button{border:none;background:none;padding:9px;font-size:13px;justify-content:center}
+  .tabs button.on{background:var(--accent);color:#fff}
+  .voices{max-height:300px;overflow:auto;margin-top:10px;display:flex;flex-direction:column;gap:6px}
+  .voice{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;border:1px solid transparent;cursor:pointer;background:var(--panel2)}
+  .voice:hover{border-color:var(--line)}
+  .voice.sel{border-color:var(--accent);background:#7c5cff1f}
+  .av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;flex:none}
+  .voice b{font-size:13px;font-weight:600;display:block}
+  .voice small{color:var(--muted);font-size:11px}
+  .tag{font-size:10px;padding:2px 6px;border-radius:6px;background:#22d3a622;color:var(--accent2);margin-left:auto;flex:none}
+  .bar{height:6px;background:var(--line);border-radius:6px;overflow:hidden;margin-top:12px}
+  .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .2s}
+  .note{margin-top:14px;font-size:12px;color:var(--muted);background:var(--panel2);border-left:3px solid var(--warn);padding:10px 12px;border-radius:8px;line-height:1.5}
+  .clips{margin-top:20px;display:flex;flex-direction:column;gap:10px}
+  .clip{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .clip p{margin:0 0 8px;font-size:13px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .clip audio{width:100%;height:38px}
+  .clip .row{margin-top:8px}
+  .clip .btn,.clip button{padding:7px 12px;font-size:12px}
+  .empty{padding:14px;text-align:center;color:var(--muted);font-size:13px}
+  footer{text-align:center;color:var(--muted);font-size:12px;padding:20px}
+  footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><rect x="3" y="9" width="2.5" height="6" rx="1"/><rect x="7.5" y="5" width="2.5" height="14" rx="1"/><rect x="12" y="2" width="2.5" height="20" rx="1"/><rect x="16.5" y="6" width="2.5" height="12" rx="1"/><rect x="21" y="10" width="2" height="4" rx="1"/></svg></div>
+  <div><h1>Tinig</h1><span>Free AI text to speech</span></div>
+  <div class="badge">Free · No sign-up · No token · Download WAV</div>
+</header>
+
+<main>
+  <section class="card">
+    <div class="row between"><strong>Your text</strong><span class="muted" id="count"></span></div>
+    <div class="chips" id="samples"></div>
+    <textarea id="text" placeholder="Type or paste anything you want to hear…"></textarea>
+    <div class="bar"><i id="prog"></i></div>
+    <div class="row" style="margin-top:14px">
+      <button class="primary" id="go">▶ Generate speech</button>
+      <button id="stop" disabled>■ Stop</button>
+      <button id="clear">Clear</button>
+      <span class="muted" id="status" style="margin-left:auto"></span>
+    </div>
+
+    <div class="row between" style="margin-top:22px"><strong>Generated audio</strong><span class="muted">Clips stay until you close the page</span></div>
+    <div class="clips" id="clips"><div class="empty">Your generated clips will appear here, ready to download.</div></div>
+  </section>
+
+  <aside class="card">
+    <strong>Voice engine</strong>
+    <div class="tabs">
+      <button id="tabAI" class="on">AI voices · Download</button>
+      <button id="tabDev">Device voices</button>
+    </div>
+
+    <div id="aiPanel">
+      <input type="search" id="aiSearch" placeholder="Search AI voices…" style="margin-top:10px">
+      <div class="voices" id="aiVoices"></div>
+    </div>
+    <div id="devPanel" style="display:none">
+      <label>Language</label>
+      <select id="lang"></select>
+      <div class="voices" id="devVoices"></div>
+    </div>
+
+    <label>Speed <span class="val" id="rateV">1.0×</span></label>
+    <input type="range" id="rate" min="0.5" max="2" step="0.05" value="1">
+    <div id="pitchWrap" style="display:none">
+      <label>Pitch <span class="val" id="pitchV">1.0</span></label>
+      <input type="range" id="pitch" min="0" max="2" step="0.05" value="1">
+    </div>
+
+    <div class="note" id="engineNote"></div>
+  </aside>
+</main>
+<footer>Tinig is free and runs entirely in your browser — your text never leaves your device. AI voices by the open-source <a href="https://huggingface.co/hexgrad/Kokoro-82M" target="_blank" rel="noopener">Kokoro-82M</a> model (Apache-2.0).</footer>
+
+<script type="module">
+const $ = id => document.getElementById(id);
+const store = {
+  get(k,d){try{const v=localStorage.getItem('tinig_'+k);return v===null?d:JSON.parse(v)}catch(e){return d}},
+  set(k,v){try{localStorage.setItem('tinig_'+k,JSON.stringify(v))}catch(e){}}
+};
+const esc = s => s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const colors=['#7c5cff','#22d3a6','#f5b84b','#ff6b8b','#4cc3ff','#c07cff','#ff9a4c'];
+
+/* ---------- AI voices (Kokoro) ---------- */
+const AI_VOICES = [
+  ['af_heart','Heart','US','Female','A'],['af_bella','Bella','US','Female','A-'],['af_nicole','Nicole','US','Female','B-'],
+  ['af_aoede','Aoede','US','Female','C+'],['af_kore','Kore','US','Female','C+'],['af_sarah','Sarah','US','Female','C+'],
+  ['af_nova','Nova','US','Female','C'],['af_alloy','Alloy','US','Female','C'],['af_sky','Sky','US','Female','C-'],
+  ['af_jessica','Jessica','US','Female','D'],['af_river','River','US','Female','D'],
+  ['am_fenrir','Fenrir','US','Male','C+'],['am_michael','Michael','US','Male','C+'],['am_puck','Puck','US','Male','C+'],
+  ['am_echo','Echo','US','Male','D'],['am_eric','Eric','US','Male','D'],['am_liam','Liam','US','Male','D'],
+  ['am_onyx','Onyx','US','Male','D'],['am_santa','Santa','US','Male','D-'],['am_adam','Adam','US','Male','F+'],
+  ['bf_emma','Emma','UK','Female','B-'],['bf_isabella','Isabella','UK','Female','C'],['bf_alice','Alice','UK','Female','D'],
+  ['bf_lily','Lily','UK','Female','D'],['bm_george','George','UK','Male','C'],['bm_fable','Fable','UK','Male','C'],
+  ['bm_lewis','Lewis','UK','Male','D+'],['bm_daniel','Daniel','UK','Male','D']
+];
+let aiVoice = store.get('aiVoice','af_heart');
+let tts = null, loading = null, engine = store.get('engine','ai'), cancel = false;
+
+function renderAI(){
+  const q = $('aiSearch').value.toLowerCase();
+  const list = AI_VOICES.filter(v => (v[1]+' '+v[2]+' '+v[3]).toLowerCase().includes(q));
+  $('aiVoices').innerHTML = list.map((v,i)=>{const c=colors[AI_VOICES.indexOf(v)%colors.length];
+    return `<div class="voice ${v[0]===aiVoice?'sel':''}" data-v="${v[0]}">
+      <div class="av" style="background:${c}33;color:${c}">${v[1].slice(0,2).toUpperCase()}</div>
+      <div><b>${v[1]}</b><small>English (${v[2]}) · ${v[3]}</small></div>
+      ${/^(A|B)/.test(v[4])?'<span class="tag">BEST</span>':''}</div>`}).join('') || '<div class="empty">No voices match.</div>';
+}
+$('aiVoices').onclick = e => { const r=e.target.closest('[data-v]'); if(!r) return; aiVoice=r.dataset.v; store.set('aiVoice',aiVoice); renderAI(); };
+$('aiSearch').oninput = renderAI;
+
+async function loadModel(){
+  if(tts) return tts;
+  if(loading) return loading;
+  loading = (async()=>{
+    setStatus('Loading AI voice model (one-time download, ~90 MB)…');
+    const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm');
+    const files = {};
+    const progress_callback = p => {
+      if(p.status==='progress' && p.total){ files[p.file]=[p.loaded,p.total];
+        let l=0,t=0; Object.values(files).forEach(([a,b])=>{l+=a;t+=b});
+        $('prog').style.width=(l/t*100)+'%'; setStatus(`Downloading AI model… ${Math.round(l/t*100)}% (only the first time)`); }
+    };
+    let device='wasm', dtype='q8';
+    try{ if(navigator.gpu && await navigator.gpu.requestAdapter()){ device='webgpu'; dtype='fp32'; } }catch(e){}
+    try{ tts = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{dtype,device,progress_callback}); }
+    catch(e){ if(device!=='wasm'){ tts = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{dtype:'q8',device:'wasm',progress_callback}); } else throw e; }
+    $('prog').style.width='0'; setStatus('AI model ready ✓');
+    return tts;
+  })();
+  try{ return await loading; } catch(e){ loading=null; throw e; }
+}
+
+function chunkText(t){
+  const parts = t.replace(/\s+\n/g,'\n').match(/[^.!?\n]+[.!?]*["')\]]*\s*|\n+/g) || [t];
+  const out=[]; let buf='';
+  for(const p of parts){ if(!p.trim()){ if(buf.trim()){out.push(buf);buf='';} continue; }
+    if((buf+p).length>300 && buf.trim()){ out.push(buf); buf=p; } else buf+=p; }
+  if(buf.trim()) out.push(buf);
+  return out.map(s=>s.trim());
+}
+
+function wav(samples, rate){
+  const buf = new ArrayBuffer(44+samples.length*2), v = new DataView(buf);
+  const w=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i))};
+  w(0,'RIFF');v.setUint32(4,36+samples.length*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);
+  v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);
+  v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,samples.length*2,true);
+  for(let i=0;i<samples.length;i++){const s=Math.max(-1,Math.min(1,samples[i]));v.setInt16(44+i*2,s<0?s*0x8000:s*0x7FFF,true);}
+  return new Blob([buf],{type:'audio/wav'});
+}
+
+async function generateAI(text){
+  const model = await loadModel();
+  const chunks = chunkText(text), pieces = []; let rate = 24000, total = 0;
+  const gap = new Float32Array(Math.round(24000*0.18));
+  for(let i=0;i<chunks.length;i++){
+    if(cancel) throw new Error('cancelled');
+    setStatus(`Generating… part ${i+1} of ${chunks.length}`);
+    const a = await model.generate(chunks[i], { voice: aiVoice, speed: +$('rate').value });
+    rate = a.sampling_rate; pieces.push(a.audio, gap); total += a.audio.length + gap.length;
+    $('prog').style.width = ((i+1)/chunks.length*100)+'%';
+  }
+  const all = new Float32Array(total); let o=0; for(const p of pieces){ all.set(p,o); o+=p.length; }
+  return wav(all, rate);
+}
+
+/* ---------- Device voices (Web Speech) ---------- */
+const synth = window.speechSynthesis; let devVoices=[], devSel=null;
+const langName = c => { try{return new Intl.DisplayNames(['en'],{type:'language'}).of(c.split(/[-_]/)[0])}catch(e){return c} };
+function loadDev(){
+  devVoices = synth ? synth.getVoices() : []; if(!devVoices.length) return;
+  const langs=[...new Set(devVoices.map(v=>v.lang.split(/[-_]/)[0]))].sort((a,b)=>langName(a).localeCompare(langName(b)));
+  const saved = store.get('lang','en');
+  $('lang').innerHTML = langs.map(l=>`<option value="${l}">${langName(l)}</option>`).join('');
+  $('lang').value = langs.includes(saved)?saved:langs[0];
+  devSel = devVoices.find(v=>v.name===store.get('devVoice',''))||null; renderDev();
+}
+function renderDev(){
+  const l=$('lang').value; const list=devVoices.filter(v=>v.lang.startsWith(l)).sort((a,b)=>/natural|online|google/i.test(b.name)-/natural|online|google/i.test(a.name));
+  if(!devSel||!list.includes(devSel)) devSel=list[0]||null;
+  $('devVoices').innerHTML = list.map(v=>{const c=colors[devVoices.indexOf(v)%colors.length];const s=v.name.replace(/^(Microsoft|Google)\s*/,'').replace(/\s*Online.*$/,'').replace(/\s*\(.*$/,'');
+    return `<div class="voice ${v===devSel?'sel':''}" data-n="${encodeURIComponent(v.name)}"><div class="av" style="background:${c}33;color:${c}">${esc(s.slice(0,2).toUpperCase())}</div><div><b>${esc(s)}</b><small>${esc(v.lang)}</small></div>${/natural|online|google/i.test(v.name)?'<span class="tag">HD</span>':''}</div>`}).join('') || '<div class="empty">No device voices found.</div>';
+}
+$('devVoices').onclick = e => { const r=e.target.closest('[data-n]'); if(!r) return; devSel=devVoices.find(v=>v.name===decodeURIComponent(r.dataset.n)); store.set('devVoice',devSel.name); renderDev(); };
+$('lang').onchange = () => { store.set('lang',$('lang').value); devSel=null; renderDev(); };
+if(synth){ loadDev(); synth.onvoiceschanged = loadDev; }
+
+function speakDevice(text){
+  return new Promise(res=>{
+    synth.cancel(); const chunks=chunkText(text); let i=0;
+    const next=()=>{ if(cancel||i>=chunks.length) return res();
+      const u=new SpeechSynthesisUtterance(chunks[i]); if(devSel){u.voice=devSel;u.lang=devSel.lang;}
+      u.rate=+$('rate').value; u.pitch=+$('pitch').value;
+      u.onend=()=>{i++;$('prog').style.width=(i/chunks.length*100)+'%';next();}; u.onerror=()=>{i++;next();};
+      setStatus('Speaking…'); synth.speak(u); };
+    next();
+  });
+}
+
+/* ---------- UI ---------- */
+function setStatus(s){ $('status').textContent=s; }
+function setEngine(e){
+  engine=e; store.set('engine',e);
+  $('tabAI').classList.toggle('on',e==='ai'); $('tabDev').classList.toggle('on',e==='dev');
+  $('aiPanel').style.display=e==='ai'?'':'none'; $('devPanel').style.display=e==='dev'?'':'none';
+  $('pitchWrap').style.display=e==='dev'?'':'none';
+  $('go').innerHTML = e==='ai' ? '⬇ Generate &amp; download' : '▶ Speak';
+  $('engineNote').innerHTML = e==='ai'
+    ? '<b>AI voices</b> run on your own device, free. The first use downloads the voice model once (~90 MB), then it is cached. Works best on a laptop/desktop in Chrome or Edge. English only.'
+    : '<b>Device voices</b> use the voices built into your browser, in many languages (including Filipino in Edge). Plays instantly, but cannot be downloaded.';
+}
+$('tabAI').onclick=()=>setEngine('ai'); $('tabDev').onclick=()=>setEngine('dev');
+
+let clipN=0;
+function addClip(blob,text){
+  if($('clips').querySelector('.empty')) $('clips').innerHTML='';
+  const url=URL.createObjectURL(blob), name=`tinig-${aiVoice}-${++clipN}.wav`;
+  const v=AI_VOICES.find(x=>x[0]===aiVoice);
+  const d=document.createElement('div'); d.className='clip';
+  d.innerHTML=`<p>${esc(v?v[1]:aiVoice)} · ${esc(text.slice(0,120))}</p><audio controls src="${url}"></audio>
+    <div class="row"><a class="btn primary" href="${url}" download="${name}">⬇ Download WAV</a><span class="muted">${(blob.size/1024/1024).toFixed(2)} MB</span><button class="del" style="margin-left:auto">Remove</button></div>`;
+  d.querySelector('.del').onclick=()=>{URL.revokeObjectURL(url);d.remove();};
+  $('clips').prepend(d); d.querySelector('audio').play().catch(()=>{});
+}
+
+$('go').onclick = async () => {
+  const text=$('text').value.trim(); if(!text){ setStatus('Type some text first.'); return; }
+  cancel=false; $('go').disabled=true; $('stop').disabled=false; $('prog').style.width='0';
+  try{
+    if(engine==='ai'){ const blob=await generateAI(text); addClip(blob,text); setStatus('Done ✓ — click Download WAV'); }
+    else { await speakDevice(text); setStatus(cancel?'Stopped':'Done ✓'); }
+  }catch(e){ setStatus(cancel?'Stopped':'Error: '+(e.message||e)); console.error(e); }
+  $('go').disabled=false; $('stop').disabled=true;
+};
+$('stop').onclick = () => { cancel=true; if(synth) synth.cancel(); setStatus('Stopping…'); };
+$('clear').onclick = () => { $('text').value=''; upd(); };
+
+const SAMPLES={
+  "Welcome":"Welcome to Tinig, a free text to speech tool. Type anything, pick a voice, and download your audio.",
+  "Story":"Once upon a time, in a small town by the sea, a curious girl found a glowing shell that could whisper secrets of the ocean.",
+  "Explainer":"Have you ever wondered how a light bulb is made? Let's find out, step by step!",
+  "Ad":"Big news! Our weekend sale is here. Up to fifty percent off on everything, this Saturday and Sunday only."
+};
+$('samples').innerHTML=Object.keys(SAMPLES).map(k=>`<button class="chip" data-s="${k}">${k}</button>`).join('');
+$('samples').onclick=e=>{const b=e.target.closest('[data-s]'); if(b){$('text').value=SAMPLES[b.dataset.s]; upd();}};
+
+function upd(){ const t=$('text').value; const w=t.split(/\s+/).filter(Boolean).length;
+  $('count').textContent=`${t.length.toLocaleString()} characters · ~${Math.max(1,Math.round(w/150*60/(+$('rate').value)))}s`; store.set('draft',t); }
+$('text').addEventListener('input',upd);
+const rateU=()=>{ $('rateV').textContent=(+$('rate').value).toFixed(2).replace(/0$/,'')+'×'; store.set('rate',$('rate').value); upd(); };
+const pitchU=()=>{ $('pitchV').textContent=(+$('pitch').value).toFixed(2).replace(/0$/,''); };
+$('rate').value=store.get('rate',1); $('rate').oninput=rateU; $('pitch').oninput=pitchU;
+
+$('text').value=store.get('draft','')||SAMPLES.Welcome;
+renderAI(); setEngine(engine); rateU(); pitchU();
+</script>
+</body>
+</html>
