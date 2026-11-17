@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tinig — Record Your Voice</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--panel2:#1e222b;--line:#2a2f3a;--text:#eef0f4;--muted:#9aa3b2;--accent:#7c5cff;--accent2:#22d3a6;--warn:#f5b84b;--bad:#ff5c7a}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text)}
+  header{display:flex;align-items:center;gap:12px;padding:18px 24px;border-bottom:1px solid var(--line)}
+  .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+  header h1{font-size:18px;margin:0}
+  header a{margin-left:auto;color:var(--muted);font-size:13px}
+  main{max-width:900px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px}
+  h2{font-size:16px;margin:0 0 10px}
+  p,li{color:var(--muted);font-size:14px;line-height:1.6}
+  button,.btn{font:600 14px Inter,sans-serif;border-radius:10px;padding:11px 18px;cursor:pointer;color:var(--text);background:var(--panel2);border:1px solid var(--line);display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+  button:hover{border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .rec{background:var(--bad);border-color:var(--bad);color:#fff;min-width:150px;justify-content:center}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .sentence{font-size:28px;line-height:1.45;font-weight:600;min-height:120px;padding:24px;background:var(--panel2);border-radius:14px;margin:14px 0;text-align:center;display:flex;align-items:center;justify-content:center}
+  @media(max-width:600px){.sentence{font-size:21px}}
+  .meter{height:10px;background:var(--line);border-radius:6px;overflow:hidden;flex:1;min-width:140px}
+  .meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--warn),var(--bad))}
+  .stat{display:flex;gap:22px;flex-wrap:wrap}
+  .stat div b{display:block;font-size:22px}
+  .stat div span{font-size:12px;color:var(--muted)}
+  .bar{height:6px;background:var(--line);border-radius:6px;overflow:hidden;margin-top:12px}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  textarea{width:100%;min-height:120px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px;font:14px/1.6 Inter,sans-serif}
+  .muted{color:var(--muted);font-size:13px}
+  .hint{font-size:12px;color:var(--muted)}
+  .pill{font-size:12px;padding:3px 9px;border-radius:99px;background:#22d3a622;color:var(--accent2)}
+  .pill.no{background:#ff5c7a22;color:var(--bad)}
+  label.check{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--text);margin-top:10px}
+  label.check input{margin-top:4px;width:18px;height:18px;accent-color:var(--accent)}
+  #grid{display:flex;flex-wrap:wrap;gap:4px;margin-top:12px}
+  #grid span{width:14px;height:14px;border-radius:3px;background:var(--line);cursor:pointer}
+  #grid span.done{background:var(--accent2)}
+  #grid span.cur{outline:2px solid var(--accent)}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<header><div class="logo"></div><h1>Tinig · Record your voice</h1><a href="./">← Back to Tinig</a></header>
+<main>
+
+<section class="card" id="consentCard">
+  <h2>Step 1 · Before you start</h2>
+  <p>This page records <b>your own voice</b> reading sentences, to train a free personal AI voice for Tinig. Recordings stay in this browser until you export them.</p>
+  <ul>
+    <li>Use a quiet room. Turn off fans and aircon if you can. A phone headset mic or any USB mic is fine.</li>
+    <li>Keep the same distance from the mic and the same speaking style the whole time. Read naturally, like a narrator.</li>
+    <li>Aim for at least <b>30 minutes</b> of audio (more is better, 60 minutes is great). You can stop and continue another day — progress is saved.</li>
+  </ul>
+  <label class="check"><input type="checkbox" id="consent"> This is my own voice, or the speaker has given clear permission to train a voice from their recordings. I won't upload recordings of other people or other AI voices.</label>
+  <div class="row" style="margin-top:14px"><button class="primary" id="start" disabled>Start microphone</button><span class="muted" id="micMsg"></span></div>
+</section>
+
+<section class="card hidden" id="recCard">
+  <div class="row" style="justify-content:space-between">
+    <h2 style="margin:0">Step 2 · Read each sentence</h2>
+    <span class="muted" id="pos"></span>
+  </div>
+  <div class="sentence" id="sentence"></div>
+  <div class="row">
+    <span class="muted">Mic level</span><div class="meter"><i id="level"></i></div><span class="pill" id="state">Ready</span>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <button id="prev">← Back</button>
+    <button class="rec" id="recBtn">● Record</button>
+    <button id="play" disabled>▶ Play</button>
+    <button id="next">Skip →</button>
+  </div>
+  <p class="hint">Shortcuts: <b>Space</b> = record / stop · <b>P</b> = play · <b>←/→</b> = back / next. After you stop, it saves and moves to the next sentence automatically. Wait half a second after pressing Record before speaking.</p>
+  <div class="bar"><i id="prog" style="width:0"></i></div>
+  <div class="stat" style="margin-top:14px">
+    <div><b id="nDone">0</b><span>sentences recorded</span></div>
+    <div><b id="mins">0.0</b><span>minutes of audio</span></div>
+    <div><b id="nLeft">0</b><span>left in script</span></div>
+  </div>
+  <div id="grid"></div>
+</section>
+
+<section class="card hidden" id="moreCard">
+  <h2>Add more sentences (optional)</h2>
+  <p>Paste your own Tagalog scripts — for example your video narration. It will be split into sentences and added to the end of the list.</p>
+  <textarea id="paste" placeholder="Paste Tagalog text here…"></textarea>
+  <div class="row" style="margin-top:10px"><button id="addBtn">Add to script</button><span class="muted" id="addMsg"></span></div>
+</section>
+
+<section class="card hidden" id="exportCard">
+  <h2>Step 3 · Export for training</h2>
+  <p>Downloads a ZIP with <code>wavs/</code> and <code>metadata.csv</code> (LJSpeech format, 22050 Hz mono). Upload this ZIP in the training notebook.</p>
+  <div class="row"><button class="primary" id="export">⬇ Download training ZIP</button><button id="wipe">Delete all recordings</button><span class="muted" id="expMsg"></span></div>
+</section>
+
+</main>
+<script src="sentences.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const RATE=22050;
+let db, sentences=[], idx=0, done=new Map(), ctx, stream, src, proc, recording=false, buf=[], lastClip=null;
+
+/* ---------- storage (IndexedDB) ---------- */
+function openDB(){ return new Promise((res,rej)=>{ const r=indexedDB.open('tinig-recorder',1);
+  r.onupgradeneeded=()=>{ r.result.createObjectStore('clips'); r.result.createObjectStore('meta'); };
+  r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+const tx=(store,mode,fn)=>new Promise((res,rej)=>{ const t=db.transaction(store,mode); const s=t.objectStore(store); const r=fn(s); t.oncomplete=()=>res(r&&r.result); t.onerror=()=>rej(t.error); });
+const put=(store,k,v)=>tx(store,'readwrite',s=>s.put(v,k));
+const get=(store,k)=>tx(store,'readonly',s=>s.get(k));
+async function allClips(){ return new Promise(res=>{ const out=new Map(); const t=db.transaction('clips','readonly'); t.objectStore('clips').openCursor().onsuccess=e=>{ const c=e.target.result; if(c){ out.set(c.key,c.value); c.continue(); } else res(out); }; }); }
+
+/* ---------- setup ---------- */
+$('consent').onchange=()=>{ $('start').disabled=!$('consent').checked; };
+$('start').onclick=async()=>{
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1}});
+  }catch(e){ $('micMsg').textContent='Microphone blocked. Allow mic access in the address bar and try again.'; return; }
+  ctx=new (window.AudioContext||window.webkitAudioContext)();
+  src=ctx.createMediaStreamSource(stream);
+  proc=ctx.createScriptProcessor(4096,1,1);
+  proc.onaudioprocess=e=>{ const d=e.inputBuffer.getChannelData(0); let pk=0; for(let i=0;i<d.length;i++){ const v=Math.abs(d[i]); if(v>pk) pk=v; }
+    $('level').style.width=Math.min(100,pk*140)+'%'; if(recording) buf.push(new Float32Array(d)); };
+  src.connect(proc); proc.connect(ctx.destination);
+  $('consentCard').classList.add('hidden'); ['recCard','moreCard','exportCard'].forEach(i=>$(i).classList.remove('hidden'));
+  show();
+};
+
+async function init(){
+  db=await openDB();
+  const extra=(await get('meta','extra'))||[];
+  sentences=[...window.TINIG_SENTENCES, ...extra];
+  done=await allClips();
+  idx=(await get('meta','idx'))||0; if(idx>=sentences.length) idx=0;
+  const firstUndone=sentences.findIndex((_,i)=>!done.has(i)); if(done.has(idx) && firstUndone>=0) idx=firstUndone;
+}
+
+/* ---------- recording ---------- */
+function resample(data, from){
+  if(from===RATE) return data; const ratio=from/RATE, n=Math.floor(data.length/ratio), o=new Float32Array(n);
+  for(let i=0;i<n;i++){ const x=i*ratio, j=Math.floor(x), t=x-j; o[i]=(data[j]||0)*(1-t)+(data[j+1]||0)*t; } return o;
+}
+function trim(a){ // trim silence, keep 0.15s padding
+  const win=Math.round(RATE*0.02); let rms=[]; for(let i=0;i<a.length;i+=win){ let s=0; for(let j=i;j<Math.min(a.length,i+win);j++) s+=a[j]*a[j]; rms.push(Math.sqrt(s/win)); }
+  const peak=Math.max(...rms), th=Math.max(0.01,peak*0.06);
+  let s=rms.findIndex(v=>v>th), e=rms.length-1-[...rms].reverse().findIndex(v=>v>th);
+  if(s<0) return null; const pad=Math.round(0.15*RATE);
+  return a.slice(Math.max(0,s*win-pad), Math.min(a.length,(e+1)*win+pad));
+}
+function toWav(s){ const b=new ArrayBuffer(44+s.length*2), v=new DataView(b); const w=(o,t)=>{for(let i=0;i<t.length;i++)v.setUint8(o+i,t.charCodeAt(i))};
+  w(0,'RIFF');v.setUint32(4,36+s.length*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,RATE,true);v.setUint32(28,RATE*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,s.length*2,true);
+  for(let i=0;i<s.length;i++){ const x=Math.max(-1,Math.min(1,s[i])); v.setInt16(44+i*2,x<0?x*0x8000:x*0x7FFF,true);} return new Blob([b],{type:'audio/wav'}); }
+
+async function toggleRec(){
+  if(!ctx) return;
+  if(ctx.state==='suspended') await ctx.resume();
+  if(!recording){ buf=[]; recording=true; $('recBtn').textContent='■ Stop'; setState('Recording…','no'); return; }
+  recording=false; $('recBtn').textContent='● Record';
+  const total=buf.reduce((a,b)=>a+b.length,0), all=new Float32Array(total); let o=0; for(const b of buf){ all.set(b,o); o+=b.length; }
+  let clip=trim(resample(all,ctx.sampleRate));
+  if(!clip || clip.length<RATE*0.6){ setState('Too quiet or too short — try again','no'); return; }
+  let pk=0; for(const v of clip) pk=Math.max(pk,Math.abs(v));
+  if(pk>0.98) setState('Saved, but it clipped — move back a little','no'); else if(pk<0.08) setState('Saved, but very quiet — move closer','no'); else setState('Saved ✓');
+  const blob=toWav(clip); await put('clips',idx,{blob,text:sentences[idx],secs:clip.length/RATE}); done.set(idx,{blob,text:sentences[idx],secs:clip.length/RATE});
+  lastClip=blob; playBlob(blob);
+  const nx=sentences.findIndex((_,i)=>i>idx && !done.has(i)); idx = nx>=0 ? nx : Math.min(idx+1,sentences.length-1);
+  await put('meta','idx',idx); show(false);
+}
+function setState(t,cls){ $('state').textContent=t; $('state').className='pill'+(cls?' '+cls:''); }
+function playBlob(b){ const a=new Audio(URL.createObjectURL(b)); a.play().catch(()=>{}); }
+
+function show(resetState=true){
+  $('sentence').textContent=sentences[idx]||'All done! Add more sentences or export.';
+  $('pos').textContent=`Sentence ${idx+1} of ${sentences.length}${done.has(idx)?' · recorded (record again to replace)':''}`;
+  $('play').disabled=!done.has(idx) && !lastClip;
+  const secs=[...done.values()].reduce((a,c)=>a+c.secs,0);
+  $('nDone').textContent=done.size; $('mins').textContent=(secs/60).toFixed(1); $('nLeft').textContent=sentences.length-done.size;
+  $('prog').style.width=Math.min(100,secs/60/30*100)+'%';
+  $('grid').innerHTML=sentences.map((_,i)=>`<span data-i="${i}" class="${done.has(i)?'done':''} ${i===idx?'cur':''}" title="${i+1}"></span>`).join('');
+  if(resetState) setState(done.has(idx)?'Recorded':'Ready');
+}
+$('grid').onclick=e=>{ const s=e.target.closest('[data-i]'); if(!s||recording) return; idx=+s.dataset.i; show(); };
+$('recBtn').onclick=toggleRec;
+$('play').onclick=()=>{ const c=done.get(idx); playBlob(c?c.blob:lastClip); };
+$('prev').onclick=()=>{ if(recording) return; idx=Math.max(0,idx-1); show(); };
+$('next').onclick=()=>{ if(recording) return; idx=Math.min(sentences.length-1,idx+1); show(); };
+document.addEventListener('keydown',e=>{ if(e.target.tagName==='TEXTAREA'||$('recCard').classList.contains('hidden')) return;
+  if(e.code==='Space'){ e.preventDefault(); toggleRec(); } else if(e.key==='p'||e.key==='P') $('play').click();
+  else if(e.key==='ArrowLeft') $('prev').click(); else if(e.key==='ArrowRight') $('next').click(); });
+
+/* ---------- more sentences ---------- */
+$('addBtn').onclick=async()=>{
+  const t=$('paste').value.replace(/\[[^\]]*\]/g,' ').replace(/\s+/g,' ').trim(); if(!t) return;
+  const parts=(t.match(/[^.!?]+[.!?]+["')]*|[^.!?]+$/g)||[]).map(s=>s.trim()).filter(s=>s.split(' ').length>=3 && s.length<=220);
+  const extra=(await get('meta','extra'))||[]; extra.push(...parts); await put('meta','extra',extra);
+  sentences=[...window.TINIG_SENTENCES,...extra]; $('paste').value=''; $('addMsg').textContent=`Added ${parts.length} sentences.`; show();
+};
+
+/* ---------- export ---------- */
+$('export').onclick=async()=>{
+  const clips=await allClips(); if(!clips.size){ $('expMsg').textContent='Nothing recorded yet.'; return; }
+  $('expMsg').textContent='Packing…'; const zip=new JSZip(); const lines=[];
+  for(const [i,c] of [...clips.entries()].sort((a,b)=>a[0]-b[0])){ const id='tinig_'+String(i+1).padStart(4,'0'); zip.file(`wavs/${id}.wav`,c.blob); lines.push(`${id}|${c.text.replace(/\|/g,' ')}`); }
+  zip.file('metadata.csv',lines.join('\n')+'\n');
+  const blob=await zip.generateAsync({type:'blob'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`tinig-voice-dataset-${clips.size}.zip`; document.body.appendChild(a); a.click(); a.remove();
+  $('expMsg').textContent=`Exported ${clips.size} recordings (${(blob.size/1024/1024).toFixed(1)} MB).`;
+};
+$('wipe').onclick=async()=>{ if($('wipe').dataset.sure!=='1'){ $('wipe').dataset.sure='1'; $('wipe').textContent='Click again to confirm delete'; return; }
+  await tx('clips','readwrite',s=>s.clear()); await put('meta','idx',0); done=new Map(); idx=0; $('wipe').dataset.sure=''; $('wipe').textContent='Delete all recordings'; show(); };
+
+init();
+</script>
+</body>
+</html>
