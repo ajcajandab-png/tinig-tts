@@ -115,7 +115,7 @@
 <footer>Tinig is free and runs entirely in your browser — your text never leaves your device. Tagalog voice by Meta's open-source <a href="https://huggingface.co/facebook/mms-tts-tgl" target="_blank" rel="noopener">MMS-TTS</a> model (CC-BY-NC 4.0, non-commercial). English AI voices by the open-source <a href="https://huggingface.co/hexgrad/Kokoro-82M" target="_blank" rel="noopener">Kokoro-82M</a> model (Apache-2.0).</footer>
 
 <script id="workerSrc" type="text/plain">
-let kokoro = null, tl = null, ortMod = null;
+let kokoro = null, tl = null, ortMod = null, piper = null;
 const post = (m, t) => self.postMessage(m, t || []);
 async function fetchWithProgress(url, total){
   let cache=null; try{ cache = await caches.open('tinig-models'); const hit = await cache.match(url); if(hit) return new Uint8Array(await hit.arrayBuffer()); }catch(e){}
@@ -150,6 +150,32 @@ async function loadTagalog(){
   tl = { ort, session: await ort.InferenceSession.create(bytes, {executionProviders:['wasm']}) };
   return tl;
 }
+async function getOrt(){
+  ortMod = ortMod || await import('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.wasm.min.mjs');
+  const ort = ortMod.default || ortMod;
+  ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+  ort.env.wasm.numThreads = (self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency||2) : 1);
+  return ort;
+}
+async function loadPiper(url){
+  if(piper) return piper;
+  const ort = await getOrt();
+  const bytes = await fetchWithProgress(url, 64000000);
+  post({type:'status', text:'Starting Tinig Tagalog voice…'});
+  piper = { ort, session: await ort.InferenceSession.create(bytes, {executionProviders:['wasm']}) };
+  return piper;
+}
+async function runPiper(m){
+  const { ort, session } = await loadPiper(m.url);
+  const feeds = {
+    input: new ort.Tensor('int64', BigInt64Array.from(m.ids.map(BigInt)), [1, m.ids.length]),
+    input_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(m.ids.length)]), [1]),
+    scales: new ort.Tensor('float32', Float32Array.from([0.667, 1/m.speed, 0.8]), [3])
+  };
+  if(session.inputNames.includes('sid')) feeds.sid = new ort.Tensor('int64', BigInt64Array.from([BigInt(m.sid||0)]), [1]);
+  const out = await session.run(feeds);
+  return { audio: Float32Array.from(out[session.outputNames[0]].data), rate: m.rate || 22050 };
+}
 async function runTagalog(ids, speed){
   const { ort, session } = await loadTagalog();
   const feeds = {};
@@ -169,16 +195,18 @@ async function runTagalog(ids, speed){
 self.onmessage = async e => {
   const m = e.data;
   try{
-    if(m.type==='load'){ if(m.engine==='tl') await loadTagalog(); else await loadKokoro(); post({type:'loaded', id:m.id}); }
+    if(m.type==='load'){ if(m.engine==='tl') await loadTagalog(); else if(m.engine==='piper') await loadPiper(m.url); else await loadKokoro(); post({type:'loaded', id:m.id}); }
     else if(m.type==='gen'){
       let r;
       if(m.engine==='tl') r = await runTagalog(m.ids, m.speed);
+      else if(m.engine==='piper') r = await runPiper(m);
       else { const k = await loadKokoro(); const a = await k.generate(m.text, {voice:m.voice, speed:m.speed}); r = {audio: Float32Array.from(a.audio), rate: a.sampling_rate}; }
       post({type:'audio', id:m.id, audio:r.audio, rate:r.rate}, [r.audio.buffer]);
     }
   }catch(err){ post({type:'error', id:m.id, message: String(err && err.message || err)}); }
 };
 </script>
+<script src="tl-g2p.js"></script>
 <script type="module">
 const $ = id => document.getElementById(id);
 const store = {
@@ -207,7 +235,7 @@ function getWorker(){
 }
 function call(msg){ return new Promise((resolve,reject)=>{ const id=++reqId; pending.set(id,{resolve,reject}); getWorker().postMessage({...msg,id}); }); }
 const loaded = {};
-async function ensure(engine){ if(loaded[engine]) return; setStatus(engine==='tl'?'Loading Tagalog voice (one-time download, ~110 MB)…':'Loading AI voice model (one-time download, ~90 MB)…'); await call({type:'load',engine}); loaded[engine]=true; $('prog').style.width='0'; }
+async function ensure(engine){ if(loaded[engine]) return; setStatus(engine==='piper'?'Loading Tinig Tagalog voices (one-time download, ~60 MB)…':engine==='tl'?'Loading basic Tagalog voice (one-time download, ~110 MB)…':'Loading AI voice model (one-time download, ~90 MB)…'); await call({type:'load',engine,url:PIPER_URL}); loaded[engine]=true; $('prog').style.width='0'; }
 
 /* ---------- voices ---------- */
 const TL_VOICES = [
@@ -226,18 +254,34 @@ const AI_VOICES = [
   ['bf_lily','Lily','UK','Female','D'],['bm_george','George','UK','Male','C'],['bm_fable','Fable','UK','Male','C'],
   ['bm_lewis','Lewis','UK','Male','D+'],['bm_daniel','Daniel','UK','Male','D']
 ];
+const PIPER_URL = new URL('voices/tinig-tl.onnx', location.href).href;
+const PIPER_NAMES = {female_1:['Ligaya','Female'], female_2:['Mutya','Female'], male_1:['Bayani','Male'], male_2:['Dakila','Male']};
+let PIPER_CFG = null, PIPER_VOICES = [];
+async function loadPiperConfig(){
+  try{ const r = await fetch('voices/tinig-tl.onnx.json', {cache:'no-cache'}); if(!r.ok) return; PIPER_CFG = await r.json();
+    const map = PIPER_CFG.speaker_id_map && Object.keys(PIPER_CFG.speaker_id_map).length ? PIPER_CFG.speaker_id_map : {female_1:0};
+    PIPER_VOICES = Object.entries(map).map(([k,sid])=>['tp_'+k, (PIPER_NAMES[k]||[k])[0], 'PH', (PIPER_NAMES[k]||[k,'Voice'])[1], sid]);
+    TL_VOICES.forEach(v=>{ v[3] = 'Basic · '+v[3].replace(/^Basic · /,''); });
+    renderAI();
+  }catch(e){}
+}
+function piperIds(text){
+  const map = PIPER_CFG.phoneme_id_map; const ids = [...map['^'], ...map['_']];
+  for(const ch of TinigG2P.normalize(text).normalize('NFD')){ if(map[ch]){ ids.push(...map[ch], ...map['_']); } }
+  ids.push(...map['$']); return ids;
+}
 let aiVoice = store.get('aiVoice','af_heart'), aiLang = store.get('aiLang','all'), engine = store.get('engine','ai'), cancel = false;
 
 function renderAI(){
   const q = $('aiSearch').value.toLowerCase();
   [...$('aiLangTabs').children].forEach(b=>b.classList.toggle('on',b.dataset.l===aiLang));
-  const all = [...TL_VOICES.map(v=>[...v,'tl']), ...AI_VOICES.map(v=>[...v,'en'])];
+  const all = [...PIPER_VOICES.map(v=>[...v.slice(0,4),'NEW','tl']), ...TL_VOICES.map(v=>[...v,'tl']), ...AI_VOICES.map(v=>[...v,'en'])];
   const list = all.filter(v => (aiLang==='all'||v[5]===aiLang) && (v[1]+' '+v[2]+' '+v[3]+' '+(v[5]==='tl'?'tagalog filipino':'english')).toLowerCase().includes(q));
   $('aiVoices').innerHTML = list.map(v=>{const c=colors[all.indexOf(v)%colors.length];
     return `<div class="voice ${v[0]===aiVoice?'sel':''}" data-v="${v[0]}">
       <div class="av" style="background:${c}33;color:${c}">${v[1].slice(0,2).toUpperCase()}</div>
       <div><b>${v[1]}</b><small>${v[5]==='tl'?'Tagalog · '+v[3]:'English ('+v[2]+') · '+v[3]}</small></div>
-      ${v[5]==='tl'?'<span class="tag">TAGALOG</span>':(/^(A|B)/.test(v[4])?'<span class="tag">BEST</span>':'')}</div>`}).join('') || '<div class="empty">No voices match.</div>';
+      ${v[4]==='NEW'?'<span class="tag">TINIG HD</span>':v[5]==='tl'?'<span class="tag">TAGALOG</span>':(/^(A|B)/.test(v[4])?'<span class="tag">BEST</span>':'')}</div>`}).join('') || '<div class="empty">No voices match.</div>';
 }
 $('aiVoices').onclick = e => { const r=e.target.closest('[data-v]'); if(!r) return; aiVoice=r.dataset.v; store.set('aiVoice',aiVoice); renderAI(); };
 $('aiSearch').oninput = renderAI;
@@ -290,19 +334,21 @@ function wav(samples, rate){
 }
 
 async function generateAI(text){
-  const tv = TL_VOICES.find(v=>v[0]===aiVoice), eng = tv ? 'tl' : 'en';
+  const pv = PIPER_VOICES.find(v=>v[0]===aiVoice);
+  const tv = pv ? null : TL_VOICES.find(v=>v[0]===aiVoice), eng = pv ? 'piper' : tv ? 'tl' : 'en';
   await ensure(eng);
-  const jobs=[]; for(const s of parseScript(text)){ if(s.pause) jobs.push(s); else chunkText(s.text, tv?160:240).forEach(t=>jobs.push({text:t})); }
+  const jobs=[]; for(const s of parseScript(text)){ if(s.pause) jobs.push(s); else chunkText(s.text, (tv||pv)?180:240).forEach(t=>jobs.push({text:t})); }
   const nText = jobs.filter(j=>j.text).length; if(!nText) throw new Error('No readable text found.');
-  const pieces=[]; let rate = tv?16000:24000, done=0, total=0;
+  const pieces=[]; let rate = pv?(PIPER_CFG.audio&&PIPER_CFG.audio.sample_rate||22050):tv?16000:24000, done=0, total=0;
   const t0=Date.now();
   for(const j of jobs){
     if(cancel) throw new Error('cancelled');
     if(j.pause){ pieces.push({sil:j.pause}); continue; }
     const eta = done ? Math.round((Date.now()-t0)/done*(nText-done)/1000) : null;
-    setStatus(`Generating${tv?' Tagalog':''}… part ${done+1} of ${nText}${eta!=null?` · ~${eta>90?Math.round(eta/60)+' min':eta+'s'} left`:''}`);
+    setStatus(`Generating${(tv||pv)?' Tagalog':''}… part ${done+1} of ${nText}${eta!=null?` · ~${eta>90?Math.round(eta/60)+' min':eta+'s'} left`:''}`);
     let r;
-    if(tv){ const ids=tlTokens(j.text); if(ids.length<3){ done++; continue; }
+    if(pv){ r = await call({type:'gen',engine:'piper',url:PIPER_URL,ids:piperIds(j.text),sid:pv[4],speed:+$('rate').value,rate}); }
+    else if(tv){ const ids=tlTokens(j.text); if(ids.length<3){ done++; continue; }
       r = await call({type:'gen',engine:'tl',ids,speed:(+$('rate').value)/tv[4]}); r.audio = pitchShift(r.audio, tv[4]); }
     else r = await call({type:'gen',engine:'en',text:j.text,voice:aiVoice,speed:+$('rate').value});
     rate = r.rate; pieces.push(r.audio, {sil:0.15}); done++;
@@ -366,7 +412,7 @@ let clipN=0;
 function addClip(blob,text){
   if($('clips').querySelector('.empty')) $('clips').innerHTML='';
   const url=URL.createObjectURL(blob), name=`tinig-${aiVoice}-${++clipN}.wav`;
-  const v=[...TL_VOICES,...AI_VOICES].find(x=>x[0]===aiVoice);
+  const v=[...PIPER_VOICES,...TL_VOICES,...AI_VOICES].find(x=>x[0]===aiVoice);
   const d=document.createElement('div'); d.className='clip';
   d.innerHTML=`<p>${esc(v?v[1]:aiVoice)} · ${esc(text.slice(0,120))}</p><audio controls src="${url}"></audio>
     <div class="row"><a class="btn primary" href="${url}" download="${name}">⬇ Download WAV</a><span class="muted">${(blob.size/1024/1024).toFixed(2)} MB</span><button class="del" style="margin-left:auto">Remove</button></div>`;
@@ -405,7 +451,7 @@ const pitchU=()=>{ $('pitchV').textContent=(+$('pitch').value).toFixed(2).replac
 $('rate').value=store.get('rate',1); $('rate').oninput=rateU; $('pitch').oninput=pitchU;
 
 $('text').value=store.get('draft','')||SAMPLES.Welcome;
-renderAI(); setEngine(engine); rateU(); pitchU();
+renderAI(); setEngine(engine); rateU(); pitchU(); loadPiperConfig();
 </script>
 
 </body>
