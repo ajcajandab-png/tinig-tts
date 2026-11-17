@@ -69,7 +69,7 @@
   </div>
   <div class="sentence" id="sentence"></div>
   <div class="row">
-    <span class="muted">Mic level</span><div class="meter"><i id="level"></i></div><span class="pill" id="state">Ready</span>
+    <span class="muted">Mic level</span><div class="meter"><i id="level"></i></div><span class="pill" id="state">Ready</span><span class="pill" id="room">Room noise: checking…</span>
   </div>
   <div class="row" style="margin-top:14px">
     <button id="prev">← Back</button>
@@ -106,7 +106,7 @@
 <script>
 const $=id=>document.getElementById(id);
 const RATE=22050;
-let db, sentences=[], idx=0, done=new Map(), ctx, stream, src, proc, recording=false, buf=[], lastClip=null;
+let noiseHist=[], db, sentences=[], idx=0, done=new Map(), ctx, stream, src, proc, recording=false, buf=[], lastClip=null;
 
 /* ---------- storage (IndexedDB) ---------- */
 function openDB(){ return new Promise((res,rej)=>{ const r=indexedDB.open('tinig-recorder',1);
@@ -127,7 +127,11 @@ $('start').onclick=async()=>{
   src=ctx.createMediaStreamSource(stream);
   proc=ctx.createScriptProcessor(4096,1,1);
   proc.onaudioprocess=e=>{ const d=e.inputBuffer.getChannelData(0); let pk=0; for(let i=0;i<d.length;i++){ const v=Math.abs(d[i]); if(v>pk) pk=v; }
-    $('level').style.width=Math.min(100,pk*140)+'%'; if(recording) buf.push(new Float32Array(d)); };
+    $('level').style.width=Math.min(100,pk*140)+'%'; if(recording) buf.push(new Float32Array(d));
+    else { let ss=0; for(let i=0;i<d.length;i++) ss+=d[i]*d[i]; noiseHist.push(Math.sqrt(ss/d.length)); if(noiseHist.length>60) noiseHist.shift(); } };
+  setInterval(()=>{ if(recording||noiseHist.length<20) return; const srt=[...noiseHist].sort((a,b)=>a-b); const nf=20*Math.log10(srt[Math.floor(srt.length*0.2)]+1e-9);
+    $('room').textContent = nf<-62?`Room noise: ${nf.toFixed(0)} dB · Great`: nf<-52?`Room noise: ${nf.toFixed(0)} dB · OK`:`Room noise: ${nf.toFixed(0)} dB · Too noisy — turn off fan/aircon or move closer`;
+    $('room').className='pill'+(nf<-52?'':' no'); },1000);
   src.connect(proc); proc.connect(ctx.destination);
   $('consentCard').classList.add('hidden'); ['recCard','moreCard','exportCard'].forEach(i=>$(i).classList.remove('hidden'));
   show();
@@ -168,7 +172,9 @@ async function toggleRec(){
   let clip=trim(resample(all,ctx.sampleRate));
   if(!clip || clip.length<RATE*0.6){ setState('Too quiet or too short — try again','no'); return; }
   let pk=0; for(const v of clip) pk=Math.max(pk,Math.abs(v));
-  if(pk>0.98) setState('Saved, but it clipped — move back a little','no'); else if(pk<0.08) setState('Saved, but very quiet — move closer','no'); else setState('Saved ✓');
+  if(pk>0.98){ setState('Too loud (clipped) — move back a little and record again','no'); playBlob(toWav(clip)); return; }
+  if(pk<0.2){ setState('Too quiet — move closer to the mic or raise mic volume, then record again','no'); playBlob(toWav(clip)); return; }
+  const g=0.89/pk; clip=clip.map(v=>v*g); setState('Saved ✓');
   const blob=toWav(clip); await put('clips',idx,{blob,text:sentences[idx],secs:clip.length/RATE}); done.set(idx,{blob,text:sentences[idx],secs:clip.length/RATE});
   lastClip=blob; playBlob(blob);
   const nx=sentences.findIndex((_,i)=>i>idx && !done.has(i)); idx = nx>=0 ? nx : Math.min(idx+1,sentences.length-1);
